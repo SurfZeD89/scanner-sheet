@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Scanner Sheet</title>
+
+<style>
+body{
+font-family:Arial;
+background:#f3f4f6;
+margin:20px;
+}
+
+table{
+border-collapse:collapse;
+width:100%;
+background:white;
+}
+
+td,th{
+border:1px solid #ddd;
+padding:8px;
+text-align:left;
+}
+
+th{
+background:#f1f1f1;
+}
+
+button{
+padding:10px;
+margin:10px 0;
+font-size:16px;
+}
+
+input{
+padding:10px;
+font-size:16px;
+width:300px;
+}
+</style>
+
+</head>
+
+<body>
+
+<h2>Scanner Sheet</h2>
+
+<input id="scanInput" placeholder="scan here">
+
+<br>
+
+<button onclick="clearAll()">Clear All</button>
+<button onclick="download()">Download Excel</button>
+
+<h3>Main Table</h3>
+
+<table id="main">
+<thead>
+<tr>
+<th>Code</th>
+<th>Duplicate</th>
+<th>Suffix</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<h3>Suffix Table</h3>
+
+<table id="suffix"></table>
+
+<script>
+
+let rows=[]
+
+const input=document.getElementById("scanInput")
+
+input.addEventListener("change",function(){
+addScan(input.value)
+input.value=""
+})
+
+function addScan(code){
+
+let suffix=code.slice(-3)
+
+rows.unshift({
+code:code,
+suffix:suffix,
+dup:""
+})
+
+updateDuplicates()
+render()
+
+}
+
+function updateDuplicates(){
+
+let seen={}
+
+for(let i=0;i<rows.length;i++){
+
+let c=rows[i].code
+
+if(!seen[c]){
+
+seen[c]=i
+rows[i].dup=""
+
+}else{
+
+rows[i].dup="exists in A"+(seen[c]+1)
+
+}
+
+}
+
+}
+
+function render(){
+
+let tbody=document.querySelector("#main tbody")
+
+tbody.innerHTML=""
+
+rows.forEach(r=>{
+
+let tr=document.createElement("tr")
+
+tr.innerHTML=
+"<td>"+r.code+"</td>"+
+"<td>"+r.dup+"</td>"+
+"<td>"+r.suffix+"</td>"
+
+tbody.appendChild(tr)
+
+})
+
+renderSuffix()
+
+}
+
+function renderSuffix(){
+
+let map={}
+
+rows.forEach(r=>{
+
+if(!map[r.suffix]) map[r.suffix]=[]
+
+map[r.suffix].push(r.code)
+
+})
+
+let suffixes=Object.keys(map)
+
+let max=0
+
+suffixes.forEach(s=>{
+if(map[s].length>max) max=map[s].length
+})
+
+let table=document.getElementById("suffix")
+
+let html="<tr>"
+
+suffixes.forEach(s=>{
+html+="<th>"+s+"</th>"
+})
+
+html+="</tr>"
+
+for(let i=0;i<max;i++){
+
+html+="<tr>"
+
+suffixes.forEach(s=>{
+
+html+="<td>"+(map[s][i]||"")+"</td>"
+
+})
+
+html+="</tr>"
+
+}
+
+table.innerHTML=html
+
+}
+
+function clearAll(){
+
+if(confirm("Delete all scans?")){
+
+rows=[]
+render()
+
+}
+
+}
+
+function download(){
+
+let csv="Code,Duplicate,Suffix\n"
+
+rows.forEach(r=>{
+csv+=r.code+","+r.dup+","+r.suffix+"\n"
+})
+
+let blob=new Blob([csv])
+
+let a=document.createElement("a")
+
+a.href=URL.createObjectURL(blob)
+
+a.download="scans.csv"
+
+a.click()
+
+}
+
+</script>
+
+</body>
+</html>
