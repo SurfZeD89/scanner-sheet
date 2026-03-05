@@ -1,17 +1,45 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Scanner Sheet</title>
 
 <style>
-body{font-family:Arial;background:#f3f4f6;margin:20px;}
-table{border-collapse:collapse;width:100%;background:white;}
-td,th{border:1px solid #ddd;padding:8px;text-align:left;}
-th{background:#f1f1f1;}
-button{padding:10px;margin:10px 6px 10px 0;font-size:16px;}
-input{padding:10px;font-size:16px;width:300px;}
-.small{font-size:13px;color:#555;margin-top:6px;}
+  :root{
+    --bg:#f3f4f6; --card:#fff; --border:#e5e7eb; --muted:#6b7280;
+    --ok:#16a34a; --dup:#dc2626;
+  }
+  body{font-family:Arial,Helvetica,sans-serif;background:var(--bg);margin:18px;}
+  h2,h3{margin:10px 0;}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input{
+    padding:12px;font-size:16px;width:min(420px,100%);
+    border:1px solid var(--border); border-radius:10px; outline:none;
+  }
+  button{
+    padding:10px 12px;font-size:15px;border-radius:10px;
+    border:1px solid var(--border); background:#fff; cursor:pointer;
+  }
+  button:hover{filter:brightness(0.98)}
+  .hint{font-size:12px;color:var(--muted);margin:6px 0 14px}
+  .card{
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:12px; margin:12px 0;
+  }
+  table{border-collapse:collapse;width:100%;background:white;}
+  td,th{border-bottom:1px solid var(--border);padding:10px;text-align:left;vertical-align:top;}
+  th{background:#f9fafb;font-weight:700;}
+  tr.highlight{outline:2px solid rgba(22,163,74,0.25); outline-offset:-2px;}
+  tr.dup{background:rgba(220,38,38,0.06);}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--border); color:#111}
+  .pill.ok{border-color:rgba(22,163,74,0.35); color:var(--ok)}
+  .pill.dup{border-color:rgba(220,38,38,0.35); color:var(--dup)}
+  .right{margin-left:auto}
+  .small{font-size:12px;color:var(--muted)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+  details summary{cursor:pointer;color:#111}
+  .toast{font-size:13px;color:#111;margin-top:6px}
 </style>
 </head>
 
@@ -19,48 +47,86 @@ input{padding:10px;font-size:16px;width:300px;}
 
 <h2>Scanner Sheet</h2>
 
-<input id="scanInput" placeholder="scan here" autocomplete="off" autocapitalize="off" spellcheck="false">
-<br>
-
-<button onclick="clearAll()">Clear All</button>
-<button onclick="download()">Download Excel (CSV)</button>
-<button onclick="exportJSON()">Export JSON</button>
-<button onclick="importJSON()">Import JSON</button>
-<div class="small">
-Export/Import מיועד לסנכרון בין טלפון↔מחשב (כי localStorage לא עובר בין מכשירים).
+<div class="row">
+  <input id="scanInput" placeholder="scan here" autocomplete="off" autocapitalize="off" spellcheck="false" />
+  <button onclick="clearAll()">Clear</button>
+  <button onclick="downloadCSV()">Download CSV</button>
+  <button onclick="exportJSON()">Export JSON</button>
+  <button onclick="importJSON()">Import JSON</button>
+  <button onclick="copyShareLink()">Copy Share Link</button>
 </div>
 
-<h3>Main Table</h3>
-<table id="main">
-  <thead>
-    <tr>
-      <th>Code</th>
-      <th>Duplicate</th>
-      <th>Suffix</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
+<div class="hint">
+  ✅ Unique table = each code once. <br>
+  📜 History table = shows every scan (A1,A2,...) so you can actually “see” duplicates. <br>
+  🔁 Phone → PC: use <b>Copy Share Link</b> (opens same data on PC). localStorage does NOT sync between devices.
+</div>
 
-<h3>Suffix Table</h3>
-<table id="suffix"></table>
+<div id="toast" class="toast"></div>
+
+<div class="card">
+  <h3>Main Table (Unique)</h3>
+  <table id="main">
+    <thead>
+      <tr>
+        <th style="width:42%">Code</th>
+        <th style="width:14%">Suffix</th>
+        <th style="width:10%">Count</th>
+        <th style="width:12%">Last</th>
+        <th>Duplicate</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="row">
+    <h3 style="margin:0">Scan History (All scans)</h3>
+    <span class="right small">This is the “A1,A2…” list.</span>
+  </div>
+  <table id="history">
+    <thead>
+      <tr>
+        <th style="width:10%">Row</th>
+        <th style="width:55%">Code</th>
+        <th style="width:15%">Suffix</th>
+        <th style="width:20%">Type</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Suffix Table (Unique)</h3>
+  <table id="suffix"></table>
+</div>
 
 <script>
 /*** CONFIG ***/
 const MIN_LEN = 9;
-const MAX_LEN = 12;      // לפי מה שאמרת: 9–12 (יש גם 10/11/12 ורק קוד אחד של 9)
+const MAX_LEN = 12;
 const END_DELAY = 260;
 
 /*** STATE ***/
-// all scans in chronological order (first scan = index 1 => A1)
-let history = []; // [{ code, suffix }]
-// unique view keyed by code
-let byCode = {};  // code -> { code, suffix, occ: [1,3,7] }
+let history = [];   // chronological: [{code, suffix}]
+let byCode = {};    // code -> {code, suffix, occ:[1..], lastScan: n}
+let lastScannedCode = "";
 
 /*** DOM ***/
 const input = document.getElementById("scanInput");
+const toastEl = document.getElementById("toast");
 let timer = null;
 let lastValue = "";
+
+/*** UI ***/
+function toast(msg){
+  toastEl.textContent = msg || "";
+  if(msg){
+    setTimeout(() => { if(toastEl.textContent === msg) toastEl.textContent=""; }, 2500);
+  }
+}
 
 /*** BEEPS ***/
 function beep(freq, dur){
@@ -86,71 +152,63 @@ function normalize(code){
 }
 
 function getSuffix(code){
-  // RD stays RD
   if(code.endsWith("RD")) return "RD";
-
-  // RA without number → treat as RA1
   if(code.endsWith("RA")) return "RA1";
-
-  // normal suffix like MR1 RB3
   const s = code.slice(-3);
   if(/^[A-Z]{2}[0-9]$/.test(s)) return s;
-
   return "";
 }
 
-// strict-ish validation to block partial scans
 function valid(code){
   if(code.length < MIN_LEN || code.length > MAX_LEN) return false;
   if(!/^[A-Z0-9]+$/.test(code)) return false;
-
-  // must have a recognized suffix, otherwise it's probably a partial scan
   const suffix = getSuffix(code);
-  if(!suffix) return false;
-
+  if(!suffix) return false; // blocks partial scans that create broken columns etc.
   return true;
 }
 
-function buildDuplicateText(occ){
-  // occ = [1,2,5] => "exists in A1, A2, A5"
+function occToText(occ){
   if(!occ || occ.length <= 1) return "";
-  return "exists in " + occ.map(n => "A" + n).join(", ");
+  return occ.map(n => "A"+n).join(", ");
+}
+
+function makeSafeCSVCell(x){
+  const s = String(x ?? "").replace(/"/g,'""');
+  return /[,"\n]/.test(s) ? `"${s}"` : s;
 }
 
 /*** CORE ***/
 function processScan(raw){
   const code = normalize(raw);
-  if(!valid(code)) return;
+  if(!valid(code)) { toast("Ignored (invalid / partial scan)"); return; }
 
   const suffix = getSuffix(code);
-
-  // add to chronological history
   history.push({ code, suffix });
-  const scanIndex = history.length; // 1-based for A1, A2...
+  const scanIndex = history.length; // 1-based for A1
 
-  // update unique store
   const existed = !!byCode[code];
   if(!byCode[code]){
-    byCode[code] = { code, suffix, occ: [scanIndex] };
+    byCode[code] = { code, suffix, occ:[scanIndex], lastScan: scanIndex };
   }else{
     byCode[code].occ.push(scanIndex);
+    byCode[code].lastScan = scanIndex;
   }
+
+  lastScannedCode = code;
 
   render();
   save();
 
-  if(existed) beepDuplicate();
-  else beepOk();
+  if(existed){ beepDuplicate(); toast("Duplicate: " + code); }
+  else { beepOk(); toast("OK: " + code); }
 }
 
-/*** INPUT CAPTURE (NO ENTER) ***/
+/*** INPUT CAPTURE ***/
 input.addEventListener("input", () => {
   lastValue = input.value;
-
   clearTimeout(timer);
   timer = setTimeout(() => {
     if(input.value !== lastValue) return;
-
     const v = input.value;
     input.value = "";
     lastValue = "";
@@ -158,7 +216,6 @@ input.addEventListener("input", () => {
   }, END_DELAY);
 });
 
-// If Enter happens sometimes
 input.addEventListener("keydown", (e) => {
   if(e.key === "Enter"){
     e.preventDefault();
@@ -172,37 +229,77 @@ input.addEventListener("keydown", (e) => {
 
 /*** RENDER ***/
 function render(){
+  renderMain();
+  renderHistory();
+  renderSuffix();
+}
+
+function renderMain(){
   const tbody = document.querySelector("#main tbody");
   tbody.innerHTML = "";
 
-  // show unique codes ordered by "most recently scanned"
-  // i.e. sort by last occurrence descending
-  const uniqueList = Object.values(byCode).sort((a,b) => {
-    const al = a.occ[a.occ.length - 1];
-    const bl = b.occ[b.occ.length - 1];
-    return bl - al;
-  });
+  // sort by last scanned desc (most recent first)
+  const list = Object.values(byCode).sort((a,b) => (b.lastScan - a.lastScan));
 
-  uniqueList.forEach(r => {
+  for(const r of list){
     const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td>"+r.code+"</td>"+
-      "<td>"+buildDuplicateText(r.occ)+"</td>"+
-      "<td>"+(r.suffix || "")+"</td>";
-    tbody.appendChild(tr);
-  });
+    const count = r.occ.length;
+    const isDup = count > 1;
 
-  renderSuffix(uniqueList);
+    if(r.code === lastScannedCode) tr.classList.add("highlight");
+    if(isDup) tr.classList.add("dup");
+
+    tr.innerHTML = `
+      <td class="mono">${r.code}</td>
+      <td><span class="pill">${r.suffix}</span></td>
+      <td>${count} ${isDup ? '<span class="pill dup">dup</span>' : '<span class="pill ok">ok</span>'}</td>
+      <td class="mono">A${r.lastScan}</td>
+      <td class="mono">${isDup ? occToText(r.occ) : ""}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  if(!list.length){
+    tbody.innerHTML = `<tr><td colspan="5" class="small">Scan something…</td></tr>`;
+  }
 }
 
-function renderSuffix(uniqueList){
+function renderHistory(){
+  const tbody = document.querySelector("#history tbody");
+  tbody.innerHTML = "";
+
+  // show newest first (top)
+  for(let i = history.length - 1; i >= 0; i--){
+    const rowNum = i + 1;
+    const h = history[i];
+    const countSoFar = byCode[h.code]?.occ.length || 1;
+    // NOTE: this isn't perfect “at that time”, but good enough for viewing.
+    const isDup = (byCode[h.code]?.occ || []).filter(n => n <= rowNum).length > 1;
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="mono">A${rowNum}</td>
+      <td class="mono">${h.code}</td>
+      <td><span class="pill">${h.suffix}</span></td>
+      <td>${isDup ? '<span class="pill dup">duplicate</span>' : '<span class="pill ok">first</span>'}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  if(!history.length){
+    tbody.innerHTML = `<tr><td colspan="4" class="small">No scans yet.</td></tr>`;
+  }
+}
+
+function renderSuffix(){
+  const uniqueList = Object.values(byCode).sort((a,b) => b.lastScan - a.lastScan);
   const map = {}; // suffix -> [codes]
-  uniqueList.forEach(r => {
-    const s = r.suffix;
-    if(!s) return;
-    if(!map[s]) map[s] = [];
-    map[s].push(r.code);
-  });
+
+  for(const r of uniqueList){
+    if(!r.suffix) continue;
+    if(!map[r.suffix]) map[r.suffix] = [];
+    map[r.suffix].push(r.code);
+  }
 
   const suffixes = Object.keys(map).sort();
   const table = document.getElementById("suffix");
@@ -213,67 +310,55 @@ function renderSuffix(uniqueList){
   }
 
   let max = 0;
-  suffixes.forEach(s => { if(map[s].length > max) max = map[s].length; });
+  suffixes.forEach(s => max = Math.max(max, map[s].length));
 
   let html = "<tr>";
-  suffixes.forEach(s => { html += "<th>"+s+"</th>"; });
+  suffixes.forEach(s => html += `<th>${s}</th>`);
   html += "</tr>";
 
   for(let i=0;i<max;i++){
     html += "<tr>";
-    suffixes.forEach(s => {
-      html += "<td>"+(map[s][i] || "")+"</td>";
-    });
+    suffixes.forEach(s => html += `<td class="mono">${map[s][i] || ""}</td>`);
     html += "</tr>";
   }
-
   table.innerHTML = html;
 }
 
-/*** BUTTONS ***/
+/*** ACTIONS ***/
 function clearAll(){
   if(confirm("Delete all scans?")){
     history = [];
     byCode = {};
+    lastScannedCode = "";
     render();
     save();
     input.focus();
   }
 }
 
-// download unique table as CSV (Excel friendly)
-function download(){
-  let csv = "Code,Duplicate,Suffix\n";
-
-  const uniqueList = Object.values(byCode).sort((a,b) => {
-    const al = a.occ[a.occ.length - 1];
-    const bl = b.occ[b.occ.length - 1];
-    return bl - al;
-  });
-
-  uniqueList.forEach(r => {
-    const dup = buildDuplicateText(r.occ);
-    const line = [r.code, dup, r.suffix || ""].map(x => {
-      const s = String(x).replace(/"/g,'""');
-      return /[,"\n]/.test(s) ? `"${s}"` : s;
-    }).join(",");
+function downloadCSV(){
+  // export UNIQUE table as CSV
+  const list = Object.values(byCode).sort((a,b) => b.lastScan - a.lastScan);
+  let csv = "Code,Suffix,Count,Last,Duplicate\n";
+  for(const r of list){
+    const line = [
+      r.code,
+      r.suffix || "",
+      r.occ.length,
+      "A"+r.lastScan,
+      occToText(r.occ)
+    ].map(makeSafeCSVCell).join(",");
     csv += line + "\n";
-  });
-
+  }
   const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "scans.csv";
+  a.download = "scans_unique.csv";
   a.click();
 }
 
-/*** SYNC BETWEEN DEVICES (EXPORT/IMPORT) ***/
 function exportJSON(){
-  const payload = {
-    v: 1,
-    history,
-    byCode
-  };
+  const payload = { v:2, history, byCode };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -295,8 +380,10 @@ function importJSON(){
         if(!obj || !obj.history || !obj.byCode) throw new Error("Bad file");
         history = obj.history || [];
         byCode = obj.byCode || {};
+        lastScannedCode = "";
         render();
         save();
+        toast("Imported ✅");
         input.focus();
       }catch(e){
         alert("Invalid JSON file");
@@ -307,12 +394,56 @@ function importJSON(){
   inp.click();
 }
 
+/*** SHARE LINK (NO SERVER) ***/
+function encodeShareState(){
+  const payload = { v:2, history, byCode };
+  const json = JSON.stringify(payload);
+  // base64 (UTF-8 safe)
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return b64;
+}
+function decodeShareState(b64){
+  const json = decodeURIComponent(escape(atob(b64)));
+  return JSON.parse(json);
+}
+
+async function copyShareLink(){
+  const b64 = encodeShareState();
+  const url = location.origin + location.pathname + "#data=" + b64;
+  try{
+    await navigator.clipboard.writeText(url);
+    toast("Share link copied ✅ (open it on PC)");
+  }catch(e){
+    // fallback prompt
+    prompt("Copy this link:", url);
+  }
+}
+
+function loadFromHashIfAny(){
+  const hash = location.hash || "";
+  const m = hash.match(/#data=([A-Za-z0-9+/=]+)/);
+  if(!m) return;
+  try{
+    const obj = decodeShareState(m[1]);
+    if(obj && obj.history && obj.byCode){
+      history = obj.history;
+      byCode = obj.byCode;
+      lastScannedCode = "";
+      save();
+      render();
+      toast("Loaded from share link ✅");
+    }
+  }catch(e){
+    // ignore bad hashes
+  }
+}
+
 /*** STORAGE ***/
 function save(){
-  localStorage.setItem("scannerData_v2", JSON.stringify({ history, byCode }));
+  localStorage.setItem("scannerData_v3", JSON.stringify({ v:3, history, byCode }));
 }
 function load(){
-  const data = localStorage.getItem("scannerData_v2");
+  const data = localStorage.getItem("scannerData_v3");
   if(data){
     try{
       const obj = JSON.parse(data) || {};
@@ -327,6 +458,7 @@ function load(){
 
 /*** INIT ***/
 load();
+loadFromHashIfAny();
 render();
 input.focus();
 </script>
