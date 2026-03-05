@@ -9,8 +9,9 @@ body{font-family:Arial;background:#f3f4f6;margin:20px;}
 table{border-collapse:collapse;width:100%;background:white;}
 td,th{border:1px solid #ddd;padding:8px;text-align:left;}
 th{background:#f1f1f1;}
-button{padding:10px;margin:10px 0;font-size:16px;}
+button{padding:10px;margin:10px 6px 10px 0;font-size:16px;}
 input{padding:10px;font-size:16px;width:300px;}
+.small{font-size:13px;color:#555;margin-top:6px;}
 </style>
 </head>
 
@@ -22,7 +23,12 @@ input{padding:10px;font-size:16px;width:300px;}
 <br>
 
 <button onclick="clearAll()">Clear All</button>
-<button onclick="download()">Download Excel</button>
+<button onclick="download()">Download Excel (CSV)</button>
+<button onclick="exportJSON()">Export JSON</button>
+<button onclick="importJSON()">Import JSON</button>
+<div class="small">
+Export/Import מיועד לסנכרון בין טלפון↔מחשב (כי localStorage לא עובר בין מכשירים).
+</div>
 
 <h3>Main Table</h3>
 <table id="main">
@@ -40,13 +46,19 @@ input{padding:10px;font-size:16px;width:300px;}
 <table id="suffix"></table>
 
 <script>
+/*** CONFIG ***/
 const MIN_LEN = 9;
+const MAX_LEN = 12;      // לפי מה שאמרת: 9–12 (יש גם 10/11/12 ורק קוד אחד של 9)
 const END_DELAY = 260;
 
-let rows = [];
+/*** STATE ***/
+// all scans in chronological order (first scan = index 1 => A1)
+let history = []; // [{ code, suffix }]
+// unique view keyed by code
+let byCode = {};  // code -> { code, suffix, occ: [1,3,7] }
 
+/*** DOM ***/
 const input = document.getElementById("scanInput");
-
 let timer = null;
 let lastValue = "";
 
@@ -73,12 +85,6 @@ function normalize(code){
   return (code || "").trim().replace(/\s+/g, "").toUpperCase();
 }
 
-function valid(code){
-  if(code.length < MIN_LEN) return false;
-  if(!/^[A-Z0-9]+$/.test(code)) return false;
-  return true;
-}
-
 function getSuffix(code){
   // RD stays RD
   if(code.endsWith("RD")) return "RD";
@@ -93,26 +99,47 @@ function getSuffix(code){
   return "";
 }
 
+// strict-ish validation to block partial scans
+function valid(code){
+  if(code.length < MIN_LEN || code.length > MAX_LEN) return false;
+  if(!/^[A-Z0-9]+$/.test(code)) return false;
+
+  // must have a recognized suffix, otherwise it's probably a partial scan
+  const suffix = getSuffix(code);
+  if(!suffix) return false;
+
+  return true;
+}
+
+function buildDuplicateText(occ){
+  // occ = [1,2,5] => "exists in A1, A2, A5"
+  if(!occ || occ.length <= 1) return "";
+  return "exists in " + occ.map(n => "A" + n).join(", ");
+}
+
 /*** CORE ***/
 function processScan(raw){
   const code = normalize(raw);
   if(!valid(code)) return;
 
-  const existingIndex = rows.findIndex(r => r.code === code); // before insert
   const suffix = getSuffix(code);
 
-  let dup = "";
-  if(existingIndex !== -1){
-    // oldIndex shifts down by 1 after unshift => sheet row is oldIndex+2
-    dup = "exists in A" + (existingIndex + 2);
-  }
+  // add to chronological history
+  history.push({ code, suffix });
+  const scanIndex = history.length; // 1-based for A1, A2...
 
-  rows.unshift({ code, dup, suffix });
+  // update unique store
+  const existed = !!byCode[code];
+  if(!byCode[code]){
+    byCode[code] = { code, suffix, occ: [scanIndex] };
+  }else{
+    byCode[code].occ.push(scanIndex);
+  }
 
   render();
   save();
 
-  if(existingIndex !== -1) beepDuplicate();
+  if(existed) beepDuplicate();
   else beepOk();
 }
 
@@ -145,34 +172,34 @@ input.addEventListener("keydown", (e) => {
 
 /*** RENDER ***/
 function render(){
-  // Main table
   const tbody = document.querySelector("#main tbody");
   tbody.innerHTML = "";
 
-  rows.forEach(r => {
+  // show unique codes ordered by "most recently scanned"
+  // i.e. sort by last occurrence descending
+  const uniqueList = Object.values(byCode).sort((a,b) => {
+    const al = a.occ[a.occ.length - 1];
+    const bl = b.occ[b.occ.length - 1];
+    return bl - al;
+  });
+
+  uniqueList.forEach(r => {
     const tr = document.createElement("tr");
     tr.innerHTML =
       "<td>"+r.code+"</td>"+
-      "<td>"+(r.dup || "")+"</td>"+
+      "<td>"+buildDuplicateText(r.occ)+"</td>"+
       "<td>"+(r.suffix || "")+"</td>";
     tbody.appendChild(tr);
   });
 
-  renderSuffix();
+  renderSuffix(uniqueList);
 }
 
-function renderSuffix(){
-  // unique codes only (no duplicates in suffix table)
-  const map = {};
-  const seen = new Set();
-
-  rows.forEach(r => {
-    if(seen.has(r.code)) return;
-    seen.add(r.code);
-
+function renderSuffix(uniqueList){
+  const map = {}; // suffix -> [codes]
+  uniqueList.forEach(r => {
     const s = r.suffix;
     if(!s) return;
-
     if(!map[s]) map[s] = [];
     map[s].push(r.code);
   });
@@ -206,18 +233,27 @@ function renderSuffix(){
 /*** BUTTONS ***/
 function clearAll(){
   if(confirm("Delete all scans?")){
-    rows = [];
+    history = [];
+    byCode = {};
     render();
     save();
     input.focus();
   }
 }
 
+// download unique table as CSV (Excel friendly)
 function download(){
   let csv = "Code,Duplicate,Suffix\n";
 
-  rows.forEach(r => {
-    const line = [r.code, r.dup || "", r.suffix || ""].map(x => {
+  const uniqueList = Object.values(byCode).sort((a,b) => {
+    const al = a.occ[a.occ.length - 1];
+    const bl = b.occ[b.occ.length - 1];
+    return bl - al;
+  });
+
+  uniqueList.forEach(r => {
+    const dup = buildDuplicateText(r.occ);
+    const line = [r.code, dup, r.suffix || ""].map(x => {
       const s = String(x).replace(/"/g,'""');
       return /[,"\n]/.test(s) ? `"${s}"` : s;
     }).join(",");
@@ -231,15 +267,61 @@ function download(){
   a.click();
 }
 
+/*** SYNC BETWEEN DEVICES (EXPORT/IMPORT) ***/
+function exportJSON(){
+  const payload = {
+    v: 1,
+    history,
+    byCode
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "scannerData.json";
+  a.click();
+}
+
+function importJSON(){
+  const inp = document.createElement("input");
+  inp.type = "file";
+  inp.accept = "application/json,.json";
+  inp.onchange = () => {
+    const file = inp.files && inp.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const obj = JSON.parse(reader.result);
+        if(!obj || !obj.history || !obj.byCode) throw new Error("Bad file");
+        history = obj.history || [];
+        byCode = obj.byCode || {};
+        render();
+        save();
+        input.focus();
+      }catch(e){
+        alert("Invalid JSON file");
+      }
+    };
+    reader.readAsText(file);
+  };
+  inp.click();
+}
+
 /*** STORAGE ***/
 function save(){
-  localStorage.setItem("scannerData", JSON.stringify(rows));
+  localStorage.setItem("scannerData_v2", JSON.stringify({ history, byCode }));
 }
 function load(){
-  const data = localStorage.getItem("scannerData");
+  const data = localStorage.getItem("scannerData_v2");
   if(data){
-    try{ rows = JSON.parse(data) || []; }
-    catch{ rows = []; }
+    try{
+      const obj = JSON.parse(data) || {};
+      history = obj.history || [];
+      byCode = obj.byCode || {};
+    }catch{
+      history = [];
+      byCode = {};
+    }
   }
 }
 
