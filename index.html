@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Scanner Sheet</title>
 
+<script src="https://cdn.jsdelivr.net/npm/bwip-js/dist/bwip-js-min.js"></script>
+
 <style>
   :root{
     --bg:#f3f4f6; --card:#fff; --border:#e5e7eb; --muted:#6b7280;
@@ -40,6 +42,22 @@
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
   details summary{cursor:pointer;color:#111}
   .toast{font-size:13px;color:#111;margin-top:6px}
+
+  .dm-cell{
+    width:92px;
+    min-width:92px;
+  }
+  .dm-wrap{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    min-height:72px;
+  }
+  .dm-wrap canvas{
+    display:block;
+    max-width:72px;
+    height:auto;
+  }
 </style>
 </head>
 
@@ -69,8 +87,9 @@
   <table id="main">
     <thead>
       <tr>
-        <th style="width:42%">Code</th>
-        <th style="width:14%">Suffix</th>
+        <th style="width:30%">Code</th>
+        <th style="width:14%">Data Matrix</th>
+        <th style="width:12%">Suffix</th>
         <th style="width:10%">Count</th>
         <th style="width:12%">Last</th>
         <th>Duplicate</th>
@@ -163,7 +182,7 @@ function valid(code){
   if(code.length < MIN_LEN || code.length > MAX_LEN) return false;
   if(!/^[A-Z0-9]+$/.test(code)) return false;
   const suffix = getSuffix(code);
-  if(!suffix) return false; // blocks partial scans that create broken columns etc.
+  if(!suffix) return false;
   return true;
 }
 
@@ -177,6 +196,30 @@ function makeSafeCSVCell(x){
   return /[,"\n]/.test(s) ? `"${s}"` : s;
 }
 
+function createDataMatrixCanvas(text){
+  const wrap = document.createElement("div");
+  wrap.className = "dm-wrap";
+
+  const canvas = document.createElement("canvas");
+  wrap.appendChild(canvas);
+
+  try{
+    bwipjs.toCanvas(canvas, {
+      bcid: 'datamatrix',
+      text: text,
+      scale: 3,
+      paddingwidth: 3,
+      paddingheight: 3,
+      includetext: false
+    });
+  }catch(e){
+    wrap.textContent = "ERR";
+    console.error("Data Matrix error for:", text, e);
+  }
+
+  return wrap;
+}
+
 /*** CORE ***/
 function processScan(raw){
   const code = normalize(raw);
@@ -184,7 +227,7 @@ function processScan(raw){
 
   const suffix = getSuffix(code);
   history.push({ code, suffix });
-  const scanIndex = history.length; // 1-based for A1
+  const scanIndex = history.length;
 
   const existed = !!byCode[code];
   if(!byCode[code]){
@@ -238,7 +281,6 @@ function renderMain(){
   const tbody = document.querySelector("#main tbody");
   tbody.innerHTML = "";
 
-  // sort by last scanned desc (most recent first)
   const list = Object.values(byCode).sort((a,b) => (b.lastScan - a.lastScan));
 
   for(const r of list){
@@ -249,18 +291,40 @@ function renderMain(){
     if(r.code === lastScannedCode) tr.classList.add("highlight");
     if(isDup) tr.classList.add("dup");
 
-    tr.innerHTML = `
-      <td class="mono">${r.code}</td>
-      <td><span class="pill">${r.suffix}</span></td>
-      <td>${count} ${isDup ? '<span class="pill dup">dup</span>' : '<span class="pill ok">ok</span>'}</td>
-      <td class="mono">A${r.lastScan}</td>
-      <td class="mono">${isDup ? occToText(r.occ) : ""}</td>
-    `;
+    const codeTd = document.createElement("td");
+    codeTd.className = "mono";
+    codeTd.textContent = r.code;
+
+    const dmTd = document.createElement("td");
+    dmTd.className = "dm-cell";
+    dmTd.appendChild(createDataMatrixCanvas(r.code));
+
+    const suffixTd = document.createElement("td");
+    suffixTd.innerHTML = `<span class="pill">${r.suffix}</span>`;
+
+    const countTd = document.createElement("td");
+    countTd.innerHTML = `${count} ${isDup ? '<span class="pill dup">dup</span>' : '<span class="pill ok">ok</span>'}`;
+
+    const lastTd = document.createElement("td");
+    lastTd.className = "mono";
+    lastTd.textContent = `A${r.lastScan}`;
+
+    const dupTd = document.createElement("td");
+    dupTd.className = "mono";
+    dupTd.textContent = isDup ? occToText(r.occ) : "";
+
+    tr.appendChild(codeTd);
+    tr.appendChild(dmTd);
+    tr.appendChild(suffixTd);
+    tr.appendChild(countTd);
+    tr.appendChild(lastTd);
+    tr.appendChild(dupTd);
+
     tbody.appendChild(tr);
   }
 
   if(!list.length){
-    tbody.innerHTML = `<tr><td colspan="5" class="small">Scan something…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="small">Scan something…</td></tr>`;
   }
 }
 
@@ -268,12 +332,9 @@ function renderHistory(){
   const tbody = document.querySelector("#history tbody");
   tbody.innerHTML = "";
 
-  // show newest first (top)
   for(let i = history.length - 1; i >= 0; i--){
     const rowNum = i + 1;
     const h = history[i];
-    const countSoFar = byCode[h.code]?.occ.length || 1;
-    // NOTE: this isn't perfect “at that time”, but good enough for viewing.
     const isDup = (byCode[h.code]?.occ || []).filter(n => n <= rowNum).length > 1;
 
     const tr = document.createElement("tr");
@@ -293,7 +354,7 @@ function renderHistory(){
 
 function renderSuffix(){
   const uniqueList = Object.values(byCode).sort((a,b) => b.lastScan - a.lastScan);
-  const map = {}; // suffix -> [codes]
+  const map = {};
 
   for(const r of uniqueList){
     if(!r.suffix) continue;
@@ -337,7 +398,6 @@ function clearAll(){
 }
 
 function downloadCSV(){
-  // export UNIQUE table as CSV
   const list = Object.values(byCode).sort((a,b) => b.lastScan - a.lastScan);
   let csv = "Code,Suffix,Count,Last,Duplicate\n";
   for(const r of list){
@@ -398,7 +458,6 @@ function importJSON(){
 function encodeShareState(){
   const payload = { v:2, history, byCode };
   const json = JSON.stringify(payload);
-  // base64 (UTF-8 safe)
   const b64 = btoa(unescape(encodeURIComponent(json)));
   return b64;
 }
@@ -414,7 +473,6 @@ async function copyShareLink(){
     await navigator.clipboard.writeText(url);
     toast("Share link copied ✅ (open it on PC)");
   }catch(e){
-    // fallback prompt
     prompt("Copy this link:", url);
   }
 }
@@ -433,9 +491,7 @@ function loadFromHashIfAny(){
       render();
       toast("Loaded from share link ✅");
     }
-  }catch(e){
-    // ignore bad hashes
-  }
+  }catch(e){}
 }
 
 /*** STORAGE ***/
